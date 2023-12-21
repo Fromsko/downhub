@@ -28,6 +28,26 @@ builds:
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{ .CommitDate }} -X main.builtBy=goreleaser -X main.treeState={{ .IsGitDirty }}
+    targets:
+      - darwin-amd64
+      - linux-amd64
+      - linux-arm64
+      - linux-386
+      - linux-armv7
+      - windows-amd64
+      - windows-386
+    artifacts:
+      - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+        checksum:
+          name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+        fpm:
+          darwin:
+            - brew: []
+          linux:
+            - package: rpm
+            - package: deb
+          windows:
+            - package: zip
 
 universal_binaries:
   - replace: false
@@ -49,16 +69,16 @@ changelog:
       - go mod tidy
   groups:
     - title: Dependency updates
-      regexp: '^.*?(feat|fix)\(deps\)!?:.+$'
+      regexp: '^.*?(feat|fix)\(deps\)!?:.+
       order: 300
     - title: "New Features"
-      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+
       order: 100
     - title: "Security updates"
-      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+
       order: 150
     - title: "Bug fixes"
-      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+
       order: 200
     - title: "Documentation updates"
       regexp: ^.*?doc(\([[:word:]]+\))??!?:.+$
