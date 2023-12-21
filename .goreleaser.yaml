@@ -8,7 +8,7 @@ report_sizes: true
 builds:
   - skip: false
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
       - darwin
@@ -23,6 +23,8 @@ builds:
     ignore:
       - goos: windows
         goarch: arm
+      - goos: linux
+        goarch: arm64
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{ .CommitDate }} -X main.builtBy=goreleaser -X main.treeState={{ .IsGitDirty }}
