@@ -80,12 +80,3 @@ changelog:
       order: 400
     - title: Other work
       order: 9999
-
-  filters:
-    # Commit messages matching the regexp listed here will be removed from
-    # the changelog
-    # Default is empty
-    exclude:
-      - '^docs'
-      - 'CICD'
-      - typo
