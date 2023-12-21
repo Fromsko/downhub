@@ -7,10 +7,10 @@ before:
   hooks:
     - go mod tidy
 
+report_sizes: true
+
 gomod:
   proxy: true
-
-report_sizes: true
 
 builds:
   - skip: false
