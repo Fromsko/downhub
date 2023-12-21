@@ -6,7 +6,7 @@ before:
   hooks:
     - go mod tidy
 release:
-  draft: false
+  draft: true
   discussion_category_name: General
 
 builds:
