@@ -6,7 +6,7 @@ before:
   hooks:
     - go mod tidy
 release:
-  draft: true
+  draft: false
   discussion_category_name: General
 
 builds:
@@ -86,7 +86,7 @@ archives:
         format: zip
 
 nfpms:
-  - license: AGPL 3.0
+  - license: MIT
     homepage: https://github.com/Fromsko
     file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
