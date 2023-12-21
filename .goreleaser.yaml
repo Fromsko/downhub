@@ -9,9 +9,6 @@ before:
 
 report_sizes: true
 
-gomod:
-  proxy: true
-
 builds:
   - skip: false
     env:
