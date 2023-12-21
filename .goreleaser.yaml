@@ -63,28 +63,28 @@ changelog:
       - "^test:"
       - "^chore"
       - "merge conflict"
-      - Merge pull request
-      - Merge remote-tracking branch
-      - Merge branch
-      - go mod tidy
+      - "Merge pull request"
+      - "Merge remote-tracking branch"
+      - "Merge branch"
+      - "go mod tidy"
   groups:
     - title: Dependency updates
-      regexp: '^.*?(feat|fix)\(deps\)!?:.+
+      regexp: '^.*?(feat|fix)\(deps\)!?:.+'
       order: 300
     - title: "New Features"
-      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+'
       order: 100
     - title: "Security updates"
-      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+'
       order: 150
     - title: "Bug fixes"
-      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+'
       order: 200
     - title: "Documentation updates"
-      regexp: ^.*?doc(\([[:word:]]+\))??!?:.+$
+      regexp: '^.*?doc(\([[:word:]]+\))??!?:.+$'
       order: 400
     - title: "Build process updates"
-      regexp: ^.*?build(\([[:word:]]+\))??!?:.+$
+      regexp: '^.*?build(\([[:word:]]+\))??!?:.+$'
       order: 400
     - title: Other work
       order: 9999
