@@ -27,7 +27,6 @@ builds:
       - arm64
     goarm:
       - "7"
-      - "8"
     ignore:
       - goos: windows
         goarch: arm
