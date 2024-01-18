@@ -1,4 +1,4 @@
-module downhub
+module github.com/Fromsko/downhub
 
 go 1.21.0
 

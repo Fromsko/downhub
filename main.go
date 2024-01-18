@@ -1,7 +1,7 @@
 package main
 
 import (
-	"downhub/cmd"
+	"github.com/Fromsko/downhub/cmd"
 	"fmt"
 	"os"
 )

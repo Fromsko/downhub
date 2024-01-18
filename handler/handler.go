@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"downhub/common"
+	"github.com/Fromsko/downhub/common"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -48,7 +48,7 @@ func ReadFromFile(file string) (urlList []string) {
 	return
 }
 
-func Repo(hub *common.DownHub) {
+func Repo(hub *common.downhub) {
 
 	matchRegex := regexp.MustCompile(hub.Link())
 	hub.DownDir = filepath.Join(hub.DownDir, hub.RepoName)
@@ -128,7 +128,7 @@ func downFile(fetchUrl, dir string, bar *progressbar.ProgressBar) error {
 	return nil
 }
 
-func saveResult(hub *common.DownHub) {
+func saveResult(hub *common.downhub) {
 	type save struct {
 		Name string           `json:"repo_name"`
 		Url  string           `json:"repo_url"`
@@ -156,7 +156,7 @@ func taskBar(url, dir string) {
 }
 
 func DownloadRepo(url, proxy string, opts ...common.Option) {
-	hub := common.NewDownHub(
+	hub := common.Newdownhub(
 		common.WithBaseUrl(url),
 		common.WithProxy(proxy),
 		common.WithDownDir("source"),
