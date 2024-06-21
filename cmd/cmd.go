@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"downhub/handler"
+	"github.com/Fromsko/downhub/handler"
 
 	"github.com/spf13/cobra"
 )
