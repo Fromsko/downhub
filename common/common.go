@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Fromsko/gouitls/logs"
+	"github.com/Fromsko/downhub/logs"
+
 	"github.com/gocolly/colly/v2"
 )
 
@@ -26,7 +27,15 @@ type (
 	Option func(*DownHub)
 )
 
-var Log = logs.InitLogger()
+var Log = struct {
+	Info  func(string, ...interface{})
+	Warn  func(string, ...interface{})
+	Error func(string, ...interface{})
+}{
+	Info:  logs.Info,
+	Warn:  logs.Warn,
+	Error: logs.Error,
+}
 
 func (d *DownType) Filter(url string) {
 	if strings.HasSuffix(url, ".zip") {
@@ -67,7 +76,7 @@ func WithDownDir(dir ...string) Option {
 				basePath,
 				filepath.Join(dir...),
 			)
-			if err := os.MkdirAll(dirPath, 0644); err != nil {
+			if err := os.MkdirAll(dirPath, 0755); err != nil {
 				Log.Error("Create folders error!", err)
 			}
 		} else {
@@ -75,7 +84,9 @@ func WithDownDir(dir ...string) Option {
 				basePath,
 				dh.DownDir,
 			)
-			_ = os.Mkdir(dirPath, 0644)
+			if err := os.MkdirAll(dirPath, 0755); err != nil {
+				Log.Error("Create directory error!", err)
+			}
 		}
 		dh.DownDir = dirPath
 	}
@@ -105,10 +116,13 @@ func NewDownHub(opts ...Option) *DownHub {
 		opt(dh)
 	}
 
+	// Create spider if not already created
+	if dh.Spider == nil {
+		dh.Spider = colly.NewCollector()
+	}
+
+	// Set proxy if provided
 	if dh.ProxyUrl != "" {
-		if dh.Spider == nil {
-			dh.Spider = colly.NewCollector()
-		}
 		dh.Spider.SetProxy(dh.ProxyUrl)
 	}
 

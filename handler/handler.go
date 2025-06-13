@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"github.com/Fromsko/downhub/common"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,13 +11,16 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/Fromsko/downhub/common"
 
 	"github.com/gocolly/colly/v2"
-	"github.com/panjf2000/ants/v2"
-	"github.com/schollz/progressbar/v3"
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 )
 
-var wg sync.WaitGroup
+const DefaultProxy = "http://localhost:7890"
 
 func ReadFromFile(file string) (urlList []string) {
 	basePath, err := filepath.Abs(file)
@@ -35,9 +37,7 @@ func ReadFromFile(file string) (urlList []string) {
 	}
 
 	if !exists(basePath) {
-		common.Log.Errorf(
-			"%s not found!", filepath.Base(basePath),
-		)
+		common.Log.Error("%s not found!", filepath.Base(basePath))
 	} else {
 		f, err := os.ReadFile(basePath)
 		if err != nil {
@@ -48,11 +48,13 @@ func ReadFromFile(file string) (urlList []string) {
 	return
 }
 
-func Repo(hub *common.downhub) {
+func Repo(hub *common.DownHub) {
 
 	matchRegex := regexp.MustCompile(hub.Link())
 	hub.DownDir = filepath.Join(hub.DownDir, hub.RepoName)
-	_ = os.Mkdir(hub.DownDir, 0644)
+	if err := os.MkdirAll(hub.DownDir, 0755); err != nil {
+		common.Log.Error("Create directory error!", err)
+	}
 
 	hub.Spider.OnHTML("a.Link--muted[href]", func(e *colly.HTMLElement) {
 		if matchRegex.MatchString(e.Attr("href")) {
@@ -68,9 +70,8 @@ func Repo(hub *common.downhub) {
 
 	hub.Spider.OnScraped(func(r *colly.Response) {
 		nxp := hub.BaseUrl + "/tags?after=" + hub.LastTag
-
 		if r.Request.URL.String() != nxp {
-			common.Log.Info("Next repo :> ", nxp)
+			common.Log.Info("Next repo :> %s", nxp)
 			hub.Spider.Visit(nxp)
 		}
 	})
@@ -89,46 +90,55 @@ func Repo(hub *common.downhub) {
 	}()
 }
 
-func downFile(fetchUrl, dir string, bar *progressbar.ProgressBar) error {
+func downFile(fetchUrl, dir string, bar *mpb.Bar, proxy string) error {
 	tokens := strings.Split(fetchUrl, "/")
 	fileName := tokens[len(tokens)-1]
 
 	out, err := os.Create(filepath.Join(dir, fileName))
 	if err != nil {
+		bar.Abort(false)
 		return err
 	}
 
-	// TODO: It should be dynamic, not fixed.
-	proxyURL, err := url.Parse("http://localhost:7890")
-	if err != nil {
-		return fmt.Errorf("invalid proxy URL: %v", err)
-	}
-
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
+	var httpClient *http.Client
+	if proxy != "" {
+		proxyURL, err := url.Parse(proxy)
+		if err != nil {
+			bar.Abort(false)
+			return fmt.Errorf("invalid proxy URL: %v", err)
+		}
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			},
+		}
+	} else {
+		httpClient = &http.Client{}
 	}
 
 	resp, err := httpClient.Get(fetchUrl)
 	if err != nil {
+		bar.Abort(false)
 		return fmt.Errorf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
+	defer out.Close()
 
-	writer := io.MultiWriter(out, bar)
-
-	_, err = io.Copy(writer, resp.Body)
+	total := resp.ContentLength
+	if total > 0 {
+		bar.SetTotal(total, false)
+	}
+	reader := bar.ProxyReader(resp.Body)
+	_, err = io.Copy(out, reader)
 	if err != nil {
+		bar.Abort(false)
 		return err
 	}
-
-	defer out.Close()
-	defer resp.Body.Close()
-
+	bar.SetTotal(bar.Current(), true)
 	return nil
 }
 
-func saveResult(hub *common.downhub) {
+func saveResult(hub *common.DownHub) {
 	type save struct {
 		Name string           `json:"repo_name"`
 		Url  string           `json:"repo_url"`
@@ -146,46 +156,59 @@ func saveResult(hub *common.downhub) {
 	defer f.Close()
 }
 
-func taskBar(url, dir string) {
-	bar := progressbar.DefaultBytes(-1, "Download: "+url)
-
-	if err := downFile(url, dir, bar); err != nil {
-		common.Log.Error("The network caused the request to fail.")
-		return
+func DownloadRepo(url string, proxy string, opts ...common.Option) {
+	hub := common.NewDownHub(common.WithBaseUrl(url), common.WithProxy(proxy), common.WithDefaultSpider())
+	for _, opt := range opts {
+		opt(hub)
 	}
-}
-
-func DownloadRepo(url, proxy string, opts ...common.Option) {
-	hub := common.Newdownhub(
-		common.WithBaseUrl(url),
-		common.WithProxy(proxy),
-		common.WithDownDir("source"),
-		common.WithDefaultSpider(),
-	)
 
 	Repo(hub)
-
-	poolSize := len(hub.Zip)
-	pool, _ := ants.NewPool(poolSize)
-
-	for _, zipUrl := range hub.Zip {
-		wg.Add(1)
-		// Prevent resource competition
-		url := zipUrl
-		task := func() {
-			defer wg.Done()
-			taskBar(url, hub.DownDir)
-			saveResult(hub)
-			if poolSize != 1 {
-				fmt.Println()
-			}
-		}
-
-		_ = pool.Submit(task)
+	total := len(hub.Zip) + len(hub.TarGz)
+	if total == 0 {
+		common.Log.Info("No files to download")
+		return
 	}
 
+	var success, failed int
+	var mu sync.Mutex
+	p := mpb.New(mpb.WithWidth(60))
+	wg := sync.WaitGroup{}
+
+	downloadFiles := func(fileList []string) {
+		for _, fileURL := range fileList {
+			wg.Add(1)
+			fileURL := fileURL
+			fileName := filepath.Base(fileURL)
+			bar := p.New(0,
+				mpb.BarStyle().Rbound("⠿").Filler("⠶").Tip("⠿").Padding(" "),
+				mpb.PrependDecorators(
+					decor.Name(fileName+" ", decor.WC{W: 30, C: decor.DSyncWidth}),
+				),
+				mpb.AppendDecorators(
+					decor.Percentage(decor.WC{W: 5}),
+					decor.CountersKibiByte("% .1f / % .1f"),
+				),
+			)
+			go func(url, dir, proxy string, bar *mpb.Bar) {
+				defer wg.Done()
+				err := downFile(url, dir, bar, proxy)
+				mu.Lock()
+				if err == nil {
+					success++
+				} else {
+					failed++
+					common.Log.Error("下载失败: %s, %v", url, err)
+				}
+				mu.Unlock()
+				saveResult(hub)
+			}(fileURL, hub.DownDir, hub.ProxyUrl, bar)
+		}
+	}
+	downloadFiles(hub.Zip)
+	downloadFiles(hub.TarGz)
 	wg.Wait()
-	defer pool.Release()
+	p.Wait()
+	common.Log.Info("下载完成，总数: %d，成功: %d，失败: %d，存放目录: %s", total, success, failed, hub.DownDir)
 }
 
 func DownloadRepos(repos []string, proxy string) {
@@ -194,4 +217,23 @@ func DownloadRepos(repos []string, proxy string) {
 			DownloadRepo(repoUrl, proxy)
 		}
 	}
+}
+
+// 检查能否访问 github.com
+func CheckGithubAccess(proxy string) bool {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+	if proxy != "" {
+		proxyURL, err := url.Parse(proxy)
+		if err == nil {
+			client.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+		}
+	}
+	resp, err := client.Get("https://github.com/")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
 }
