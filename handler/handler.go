@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Fromsko/downhub/common"
+	"github.com/Fromsko/downhub/config"
 
 	"github.com/gocolly/colly/v2"
 	"github.com/vbauerster/mpb/v8"
@@ -21,6 +22,13 @@ import (
 )
 
 const DefaultProxy = "http://localhost:7890"
+
+var cfg *config.Config
+
+// SetConfig sets the configuration for the handler
+func SetConfig(c *config.Config) {
+	cfg = c
+}
 
 func ReadFromFile(file string) (urlList []string) {
 	basePath, err := filepath.Abs(file)
@@ -51,7 +59,11 @@ func ReadFromFile(file string) (urlList []string) {
 func Repo(hub *common.DownHub) {
 
 	matchRegex := regexp.MustCompile(hub.Link())
-	hub.DownDir = filepath.Join(hub.DownDir, hub.RepoName)
+	// Only create directory if DownDir is not set
+	if hub.DownDir == "" {
+		hub.DownDir = "source"
+		hub.DownDir = filepath.Join(hub.DownDir, hub.RepoName)
+	}
 	if err := os.MkdirAll(hub.DownDir, 0755); err != nil {
 		common.Log.Error("Create directory error!", err)
 	}
@@ -78,9 +90,9 @@ func Repo(hub *common.DownHub) {
 
 	err := hub.Spider.Visit(hub.BaseUrl + "/tags")
 	if err != nil {
-		common.Log.Error("Visiting URL:", hub.BaseUrl, "-", err)
+		common.Log.Error("Visiting URL:", hub.BaseUrl+"/tags", "-", err)
 	} else {
-		common.Log.Info("Visiting  :> ", hub.BaseUrl)
+		common.Log.Info("Visiting  :> %s", hub.BaseUrl+"/tags")
 	}
 
 	hub.Spider.Wait()
@@ -157,10 +169,100 @@ func saveResult(hub *common.DownHub) {
 }
 
 func DownloadRepo(url string, proxy string, opts ...common.Option) {
+	// Use proxy from config if not provided
+	if proxy == "" && cfg != nil && cfg.Defaults.Proxy != "" {
+		proxy = cfg.Defaults.Proxy
+	}
+
 	hub := common.NewDownHub(common.WithBaseUrl(url), common.WithProxy(proxy), common.WithDefaultSpider())
 	for _, opt := range opts {
 		opt(hub)
 	}
+
+	Repo(hub)
+	total := len(hub.Zip) + len(hub.TarGz)
+	if total == 0 {
+		common.Log.Info("No files to download")
+		return
+	}
+
+	var success, failed int
+	var mu sync.Mutex
+	p := mpb.New(mpb.WithWidth(60))
+	wg := sync.WaitGroup{}
+
+	downloadFiles := func(fileList []string) {
+		for _, fileURL := range fileList {
+			wg.Add(1)
+			fileURL := fileURL
+			fileName := filepath.Base(fileURL)
+			bar := p.New(0,
+				mpb.BarStyle().Rbound("⠿").Filler("⠶").Tip("⠿").Padding(" "),
+				mpb.PrependDecorators(
+					decor.Name(fileName+" ", decor.WC{W: 30, C: decor.DSyncWidth}),
+				),
+				mpb.AppendDecorators(
+					decor.Percentage(decor.WC{W: 5}),
+					decor.CountersKibiByte("% .1f / % .1f"),
+				),
+			)
+			go func(url, dir, proxy string, bar *mpb.Bar) {
+				defer wg.Done()
+				err := downFile(url, dir, bar, proxy)
+				mu.Lock()
+				if err == nil {
+					success++
+				} else {
+					failed++
+					common.Log.Error("下载失败: %s, %v", url, err)
+				}
+				mu.Unlock()
+				saveResult(hub)
+			}(fileURL, hub.DownDir, hub.ProxyUrl, bar)
+		}
+	}
+	downloadFiles(hub.Zip)
+	downloadFiles(hub.TarGz)
+	wg.Wait()
+	p.Wait()
+	common.Log.Info("下载完成，总数: %d，成功: %d，失败: %d，存放目录: %s", total, success, failed, hub.DownDir)
+}
+
+// DownloadRepoToDataDir downloads a repository to the data directory structure
+func DownloadRepoToDataDir(url, proxy string) {
+	// Extract owner and repo name from URL
+	// e.g., https://github.com/gin-gonic/gin -> gin-gonic/gin
+	var owner, repo string
+	if strings.Contains(url, "github.com/") {
+		parts := strings.Split(url, "github.com/")
+		if len(parts) > 1 {
+			repoParts := strings.Split(parts[1], "/")
+			if len(repoParts) >= 2 {
+				owner = repoParts[0]
+				repo = repoParts[1]
+			}
+		}
+	}
+
+	// Use proxy from config if not provided
+	if proxy == "" && cfg != nil && cfg.Defaults.Proxy != "" {
+		proxy = cfg.Defaults.Proxy
+	}
+
+	// Set download directory to base_data_dir/source_dir/owner/repo structure
+	baseDataDir := cfg.Defaults.BaseDataDir
+	sourceDir := cfg.Defaults.SourceDir
+	if baseDataDir == "" {
+		baseDataDir = "data"
+	}
+	if sourceDir == "" {
+		sourceDir = "source"
+	}
+	dataDir := filepath.Join(baseDataDir, sourceDir)
+	downloadDir := filepath.Join(dataDir, owner, repo)
+
+	hub := common.NewDownHub(common.WithBaseUrl(url), common.WithProxy(proxy), common.WithDefaultSpider())
+	hub.DownDir = downloadDir
 
 	Repo(hub)
 	total := len(hub.Zip) + len(hub.TarGz)
@@ -221,8 +323,14 @@ func DownloadRepos(repos []string, proxy string) {
 
 // 检查能否访问 github.com
 func CheckGithubAccess(proxy string) bool {
+	// Use timeout from config if available, otherwise default to 5 seconds
+	timeout := 5 * time.Second
+	if cfg != nil && cfg.Download.Timeout > 0 {
+		timeout = time.Duration(cfg.Download.Timeout) * time.Second
+	}
+
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: timeout,
 	}
 	if proxy != "" {
 		proxyURL, err := url.Parse(proxy)

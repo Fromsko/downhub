@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Fromsko/downhub/config"
 	"github.com/Fromsko/downhub/logs"
 
 	"github.com/gocolly/colly/v2"
@@ -92,6 +93,14 @@ func WithDownDir(dir ...string) Option {
 	}
 }
 
+var (
+	cfg *config.Config
+)
+
+func SetConfig(c *config.Config) {
+	cfg = c
+}
+
 func WithDefaultSpider() Option {
 	return func(dh *DownHub) {
 		if dh.Spider == nil {
@@ -99,16 +108,30 @@ func WithDefaultSpider() Option {
 		}
 
 		dh.Spider.Async = true
-		dh.Spider.Limit(&colly.LimitRule{
+
+		// Use max_concurrent_downloads from config if available, otherwise default to 20
+		parallelism := 20
+		if cfg != nil && cfg.Defaults.MaxConcurrentDownloads > 0 {
+			parallelism = cfg.Defaults.MaxConcurrentDownloads
+		}
+
+		if err := dh.Spider.Limit(&colly.LimitRule{
 			DomainGlob:  "*",
-			Parallelism: 20,
-		})
+			Parallelism: parallelism,
+		}); err != nil {
+			Log.Error("Failed to set spider limit: %v", err)
+		}
+
+		// Set user agent from config if available
+		if cfg != nil && cfg.Download.UserAgent != "" {
+			dh.Spider.UserAgent = cfg.Download.UserAgent
+		}
 	}
 }
 
 func NewDownHub(opts ...Option) *DownHub {
 	dh := &DownHub{
-		DownDir:  "source",
+		DownDir:  "", // Don't set default to avoid creating unwanted directories
 		DownType: new(DownType),
 	}
 
@@ -123,7 +146,9 @@ func NewDownHub(opts ...Option) *DownHub {
 
 	// Set proxy if provided
 	if dh.ProxyUrl != "" {
-		dh.Spider.SetProxy(dh.ProxyUrl)
+		if err := dh.Spider.SetProxy(dh.ProxyUrl); err != nil {
+			Log.Error("Failed to set proxy: %v", err)
+		}
 	}
 
 	return dh

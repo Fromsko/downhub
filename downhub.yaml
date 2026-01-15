@@ -1,0 +1,72 @@
+# DownHub Configuration File
+
+# Default settings for downloads
+defaults:
+  # Base directory for all downloads
+  base_data_dir: "data"
+  # Directory name for documentation (relative to base_data_dir)
+  docs_dir: "docs"
+  # Directory name for source code (relative to base_data_dir)
+  source_dir: "source"
+  # Default documentation path within repositories
+  docs_path: "docs"
+  # Maximum concurrent downloads
+  max_concurrent_downloads: 5
+  # Proxy configuration (leave empty to disable)
+  proxy: "http://localhost:7897"
+
+# Repository list for batch downloads
+repositories:
+  # Example:
+  # - name: "example-repo"
+  #   url: "https://github.com/user/repo"
+  #   download_docs: true
+  #   download_source: false
+  #   output_dir: "./custom-output"
+  #   docs_path: "documentation"
+
+# File filtering rules
+file_filters:
+  # Include patterns (glob patterns supported)
+  include:
+    - "*.md"
+    - "*.txt"
+    - "*.yaml"
+    - "*.yml"
+    - "*.json"
+  # Exclude patterns
+  exclude:
+    - "node_modules/*"
+    - ".git/*"
+    - "vendor/*"
+    - "*.log"
+    - "*.tmp"
+
+# Download behavior settings
+download:
+  # Timeout in seconds for HTTP requests
+  timeout: 300
+  # Number of retry attempts
+  retries: 3
+  # Delay between retries in seconds
+  retry_delay: 5
+  # User agent string
+  user_agent: "DownHub/1.0"
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+  # Log format: text, json
+  format: "text"
+  # Log output: stdout, stderr, file
+  output: "stdout"
+
+# Advanced options
+advanced:
+  # Preserve repository directory structure
+  preserve_structure: true
+  # Create README file in output directory
+  create_readme: true
+  # Validate file checksums after download
+  validate_checksums: false
