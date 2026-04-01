@@ -103,51 +103,89 @@ func Repo(hub *common.DownHub) {
 }
 
 func downFile(fetchUrl, dir string, bar *mpb.Bar, proxy string) error {
+	timeout := 60 * time.Second
+	if cfg != nil && cfg.Download.Timeout > 0 {
+		timeout = time.Duration(cfg.Download.Timeout) * time.Second
+	}
+	retries := 3
+	if cfg != nil && cfg.Download.Retries > 0 {
+		retries = cfg.Download.Retries
+	}
+	retryDelay := 5 * time.Second
+	if cfg != nil && cfg.Download.RetryDelay > 0 {
+		retryDelay = time.Duration(cfg.Download.RetryDelay) * time.Second
+	}
+
 	tokens := strings.Split(fetchUrl, "/")
 	fileName := tokens[len(tokens)-1]
 
-	out, err := os.Create(filepath.Join(dir, fileName))
-	if err != nil {
-		bar.Abort(false)
-		return err
-	}
-
-	var httpClient *http.Client
-	if proxy != "" {
-		proxyURL, err := url.Parse(proxy)
+	var lastErr error
+	for i := 0; i < retries; i++ {
+		out, err := os.Create(filepath.Join(dir, fileName))
 		if err != nil {
-			bar.Abort(false)
-			return fmt.Errorf("invalid proxy URL: %v", err)
+			lastErr = err
+			continue
 		}
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-			},
+
+		var httpClient *http.Client
+		if proxy != "" {
+			proxyURL, parseErr := url.Parse(proxy)
+			if parseErr != nil {
+				out.Close()
+				lastErr = fmt.Errorf("invalid proxy URL: %v", parseErr)
+				continue
+			}
+			httpClient = &http.Client{
+				Timeout: timeout,
+				Transport: &http.Transport{
+					Proxy: http.ProxyURL(proxyURL),
+				},
+			}
+		} else {
+			httpClient = &http.Client{
+				Timeout: timeout,
+			}
 		}
-	} else {
-		httpClient = &http.Client{}
-	}
 
-	resp, err := httpClient.Get(fetchUrl)
-	if err != nil {
-		bar.Abort(false)
-		return fmt.Errorf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	defer out.Close()
+		resp, err := httpClient.Get(fetchUrl)
+		if err != nil {
+			out.Close()
+			lastErr = fmt.Errorf("request failed: %v", err)
+			if i < retries-1 {
+				time.Sleep(retryDelay)
+			}
+			continue
+		}
 
-	total := resp.ContentLength
-	if total > 0 {
-		bar.SetTotal(total, false)
+		total := resp.ContentLength
+		if total > 0 {
+			bar.SetTotal(total, false)
+		}
+		reader := bar.ProxyReader(resp.Body)
+		_, copyErr := io.Copy(out, reader)
+		reader.Close()
+		resp.Body.Close()
+		out.Close()
+		if copyErr != nil {
+			lastErr = copyErr
+			if i < retries-1 {
+				time.Sleep(retryDelay)
+			}
+			continue
+		}
+		bar.SetTotal(bar.Current(), true)
+		return nil
 	}
-	reader := bar.ProxyReader(resp.Body)
-	_, err = io.Copy(out, reader)
-	if err != nil {
-		bar.Abort(false)
-		return err
+	bar.Abort(false)
+	return lastErr
+}
+
+// getDownloadConcurrency returns the max concurrent downloads from config
+func getDownloadConcurrency() int {
+	if cfg != nil && cfg.Defaults.MaxConcurrentDownloads > 0 {
+		return cfg.Defaults.MaxConcurrentDownloads
 	}
-	bar.SetTotal(bar.Current(), true)
-	return nil
+	return 5
 }
 
 func saveResult(hub *common.DownHub) {
@@ -188,6 +226,7 @@ func DownloadRepo(url string, proxy string, opts ...common.Option) {
 
 	var success, failed int
 	var mu sync.Mutex
+	sem := make(chan struct{}, getDownloadConcurrency())
 	p := mpb.New(mpb.WithWidth(60))
 	wg := sync.WaitGroup{}
 
@@ -208,6 +247,8 @@ func DownloadRepo(url string, proxy string, opts ...common.Option) {
 			)
 			go func(url, dir, proxy string, bar *mpb.Bar) {
 				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 				err := downFile(url, dir, bar, proxy)
 				mu.Lock()
 				if err == nil {
@@ -273,6 +314,7 @@ func DownloadRepoToDataDir(url, proxy string) {
 
 	var success, failed int
 	var mu sync.Mutex
+	sem := make(chan struct{}, getDownloadConcurrency())
 	p := mpb.New(mpb.WithWidth(60))
 	wg := sync.WaitGroup{}
 
@@ -293,6 +335,8 @@ func DownloadRepoToDataDir(url, proxy string) {
 			)
 			go func(url, dir, proxy string, bar *mpb.Bar) {
 				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 				err := downFile(url, dir, bar, proxy)
 				mu.Lock()
 				if err == nil {
